@@ -1,40 +1,49 @@
 #!/usr/bin/env python3
-"""
-Redis Module
-"""
 
-from functools import wraps
 import redis
 import requests
 from typing import Callable
+from functools import wraps
 
-redis_ = redis.Redis()
+# Initialize Redis client
+r = redis.Redis()
 
-
-def count_requests(method: Callable) -> Callable:
-    """
-    Decortator for counting
-    """
+def count_access(method: Callable) -> Callable:
     @wraps(method)
-    def wrapper(url):  # sourcery skip: use-named-expression
-        """
-        Wrapper for decorator
-        """
-        redis_.incr(f"count:{url}")
-        cached_html = redis_.get(f"cached:{url}")
-        if cached_html:
-            return cached_html.decode('utf-8')
-        html = method(url)
-        redis_.setex(f"cached:{url}", 10, html)
-        return html
-
+    def wrapper(url: str) -> str:
+        # Increment the count for the URL
+        count_key = f"count:{url}"
+        r.incr(count_key)
+        return method(url)
     return wrapper
 
+def cache_result(expiration: int = 10) -> Callable:
+    def decorator(method: Callable) -> Callable:
+        @wraps(method)
+        def wrapper(url: str) -> str:
+            # Check if the result is already cached
+            cache_key = f"cache:{url}"
+            cached_result = r.get(cache_key)
+            if cached_result:
+                return cached_result.decode('utf-8')
 
-@count_requests
+            # Call the original function and cache the result
+            result = method(url)
+            r.setex(cache_key, expiration, result)
+            return result
+        return wrapper
+    return decorator
+
+@count_access
+@cache_result(expiration=10)
 def get_page(url: str) -> str:
-    """
-    Obtain the HTML content of a  URL
-    """
-    req = requests.get(url)
-    return req.text
+    """Fetch the HTML content of a URL and return it as a string."""
+    response = requests.get(url)
+    return response.text
+
+# Example usage
+if __name__ == "__main__":
+    url = "http://slowwly.robertomurray.co.uk/delay/5000/url/https://www.example.com"
+    print(get_page(url))
+    print(get_page(url))  # This should be faster if called within 10 seconds
+
