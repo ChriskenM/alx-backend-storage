@@ -1,49 +1,36 @@
 #!/usr/bin/env python3
-
-import redis
+"""
+web cache and tracker
+"""
 import requests
-from typing import Callable
+import redis
 from functools import wraps
 
-# Initialize Redis client
-r = redis.Redis()
+store = redis.Redis()
 
-def count_access(method: Callable) -> Callable:
+
+def count_url_access(method):
+    """ Decorator counting how many times
+    a URL is accessed """
     @wraps(method)
-    def wrapper(url: str) -> str:
-        # Increment the count for the URL
-        count_key = f"count:{url}"
-        r.incr(count_key)
-        return method(url)
+    def wrapper(url):
+        cached_key = "cached:" + url
+        cached_data = store.get(cached_key)
+        if cached_data:
+            return cached_data.decode("utf-8")
+
+        count_key = "count:" + url
+        html = method(url)
+
+        store.incr(count_key)
+        store.set(cached_key, html)
+        store.expire(cached_key, 10)
+        return html
     return wrapper
 
-def cache_result(expiration: int = 10) -> Callable:
-    def decorator(method: Callable) -> Callable:
-        @wraps(method)
-        def wrapper(url: str) -> str:
-            # Check if the result is already cached
-            cache_key = f"cache:{url}"
-            cached_result = r.get(cache_key)
-            if cached_result:
-                return cached_result.decode('utf-8')
 
-            # Call the original function and cache the result
-            result = method(url)
-            r.setex(cache_key, expiration, result)
-            return result
-        return wrapper
-    return decorator
-
-@count_access
-@cache_result(expiration=10)
+@count_url_access
 def get_page(url: str) -> str:
-    """Fetch the HTML content of a URL and return it as a string."""
-    response = requests.get(url)
-    return response.text
-
-# Example usage
-if __name__ == "__main__":
-    url = "http://slowwly.robertomurray.co.uk/delay/5000/url/https://www.example.com"
-    print(get_page(url))
-    print(get_page(url))  # This should be faster if called within 10 seconds
-
+    """ Returns HTML content of a url """
+    res = requests.get(url)
+    return res.text
